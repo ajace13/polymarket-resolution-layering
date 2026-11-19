@@ -53,9 +53,9 @@ def synthetic_results():
 
 
 def test_every_figure_renders_in_both_themes(tmp_path):
-    scores, differences, predictions = synthetic_results()
-    written = save_all_figures(scores, differences, predictions, tmp_path)
-    assert len(written) == 10
+    scores, differences, _ = synthetic_results()
+    written = save_all_figures(scores, differences, tmp_path)
+    assert len(written) == 8
     assert all(path.stat().st_size > 10_000 for path in written)
 
 
@@ -63,5 +63,5 @@ def test_summary_markdown_lists_reference_and_layered_models():
     scores, differences, _ = synthetic_results()
     summary = summary_markdown(scores, differences)
     assert "| Market price (normalized) |" in summary
-    assert "Conditional logit, + fed text" in summary
+    assert "Conditional logit · + Fed text" in summary
     assert summary.count("\n|") > 10

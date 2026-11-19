@@ -64,6 +64,7 @@ def apply_theme(theme: Theme) -> None:
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.grid": True,
+            "axes.grid.axis": "y",
             "axes.axisbelow": True,
             "grid.color": theme.gridline,
             "grid.linewidth": 0.8,

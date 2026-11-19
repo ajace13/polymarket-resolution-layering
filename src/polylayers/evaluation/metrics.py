@@ -59,20 +59,3 @@ def score_table(predictions: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
-
-
-def calibration_table(predictions: pd.DataFrame, bins: int = 10) -> pd.DataFrame:
-    """Mean forecast vs. observed YES rate within equal-width probability bins."""
-    edges = np.linspace(0, 1, bins + 1)
-    binned = predictions.assign(
-        bin=pd.cut(predictions["probability"], edges, include_lowest=True, labels=False)
-    )
-    return (
-        binned.groupby("bin")
-        .agg(
-            mean_forecast=("probability", "mean"),
-            observed_rate=("label", "mean"),
-            markets=("label", "size"),
-        )
-        .reset_index()
-    )

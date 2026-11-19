@@ -9,7 +9,7 @@ from polylayers.reporting.figures import HORIZON_ORDER, MODEL_LABELS, STAGE_LABE
 def _label(model: str, stage: str) -> str:
     if stage == "-":
         return MODEL_LABELS[model]
-    return f"{MODEL_LABELS[model]}, {STAGE_LABELS[stage].lower()}"
+    return f"{MODEL_LABELS[model]} · {STAGE_LABELS[stage]}"
 
 
 def scores_markdown(scores: pd.DataFrame, models: list[tuple[str, str]]) -> str:

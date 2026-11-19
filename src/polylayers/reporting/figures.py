@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 from polylayers.evaluation.experiment import GNN_STAGES, REFERENCE_MODEL
-from polylayers.evaluation.metrics import calibration_table
 from polylayers.features.panel import FUNDAMENTAL_STAGES, LAYER_STAGES
 from polylayers.reporting.theme import THEMES, Theme, apply_theme
 
@@ -33,6 +32,10 @@ STAGE_LABELS = {
     "macro+news": "Macro + news",
     "macro+news+text": "Macro + news + text",
 }
+
+
+def horizon_title(horizon: int) -> str:
+    return f"{horizon} day before" if horizon == 1 else f"{horizon} days before"
 
 
 def _marker_style(theme: Theme, color: str) -> dict:
@@ -65,7 +68,7 @@ def plot_market_by_horizon(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
     market = scores[scores["model"] == REFERENCE_MODEL]
     uniform = scores[scores["model"] == "uniform"]
     panels = (
-        ("top1_accuracy", "Picks the winning bucket", "Share of meetings"),
+        ("top1_accuracy", "Market favorite wins", "Share of test meetings"),
         ("brier", "Brier score (lower is better)", "Brier score"),
     )
     for axis, (metric, title, ylabel) in zip(axes, panels, strict=True):
@@ -77,7 +80,7 @@ def plot_market_by_horizon(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
         axis.set_ylabel(ylabel)
         _horizon_axis(axis)
     axes[0].set_ylim(0, 1.05)
-    axes[0].legend(loc="lower right")
+    axes[0].legend(loc="center right")
     return figure
 
 
@@ -99,7 +102,7 @@ def _forest(axis, rows: pd.DataFrame, stages: list[str], models: list[str], them
     axis.axvline(0, color=theme.baseline, linewidth=1)
     axis.set_yticks(range(len(stages)))
     axis.set_yticklabels([STAGE_LABELS[stage] for stage in stages])
-    axis.invert_yaxis()
+    axis.grid(axis="x", visible=True)
     axis.grid(axis="y", visible=False)
 
 
@@ -110,16 +113,19 @@ def plot_differences(
     figure, axes = plt.subplots(
         1,
         len(HORIZON_ORDER),
-        figsize=(11, 0.55 * len(stages) + 1.9),
+        figsize=(11, 0.55 * len(stages) + 2.0),
         sharey=True,
         layout="constrained",
     )
     brier = differences[(differences["metric"] == "brier") & differences["model"].isin(models)]
     for axis, horizon in zip(axes, HORIZON_ORDER, strict=True):
         _forest(axis, brier[brier["horizon_days"] == horizon], stages, models, theme)
-        axis.set_title(f"{horizon} days before", loc="left")
+        axis.set_title(horizon_title(horizon), loc="left")
         axis.set_xlabel("Brier difference vs. market")
-    axes[0].legend(loc="upper left", bbox_to_anchor=(0, -0.28), ncol=len(models))
+    # The y-axis is shared, so invert it once: stages read top to bottom in the order added.
+    axes[0].invert_yaxis()
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="outside lower left", ncol=len(models))
     figure.suptitle(
         title, x=0.01, ha="left", fontsize=12, fontweight="semibold", color=theme.ink_primary
     )
@@ -128,8 +134,9 @@ def plot_differences(
 
 def plot_fundamentals(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
     """Can fundamentals alone pick the outcome? Brier by horizon without market prices."""
-    figure, axis = plt.subplots(figsize=(6.5, 3.8), layout="constrained")
+    figure, axis = plt.subplots(figsize=(7.5, 3.8), layout="constrained")
     best_stage = list(FUNDAMENTAL_STAGES)[-1]
+    stage_text = STAGE_LABELS[best_stage].lower()
     lines = [
         (
             scores[scores["model"] == REFERENCE_MODEL],
@@ -139,69 +146,35 @@ def plot_fundamentals(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
         (
             scores[(scores["model"] == "clogit") & (scores["stage"] == best_stage)],
             theme.series[1],
-            f"Conditional logit, {STAGE_LABELS[best_stage].lower()}",
+            f"Conditional logit, {stage_text}",
         ),
         (
             scores[(scores["model"] == "logistic") & (scores["stage"] == best_stage)],
             theme.series[2],
-            f"Logistic, {STAGE_LABELS[best_stage].lower()}",
+            f"Logistic regression, {stage_text}",
         ),
         (scores[scores["model"] == "uniform"], theme.ink_muted, MODEL_LABELS["uniform"]),
     ]
     for frame, color, label in lines:
         _line_by_horizon(axis, frame, "brier", color, label, theme)
-    axis.set_title("Brier score without the market's price (lower is better)", loc="left")
+    axis.set_title("Fundamentals alone vs. the market (Brier, lower is better)", loc="left")
     axis.set_ylabel("Brier score")
     _horizon_axis(axis)
     axis.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0))
     return figure
 
 
-def plot_calibration(predictions: pd.DataFrame, theme: Theme) -> plt.Figure:
-    """Reliability of the normalized market price at the longest and shortest horizons."""
-    horizons = [HORIZON_ORDER[0], HORIZON_ORDER[-1]]
-    figure, axes = plt.subplots(1, 2, figsize=(8, 3.8), sharey=True, layout="constrained")
-    market = predictions[predictions["model"] == REFERENCE_MODEL]
-    for axis, horizon in zip(axes, horizons, strict=True):
-        table = calibration_table(market[market["horizon_days"] == horizon], bins=5)
-        axis.plot([0, 1], [0, 1], color=theme.baseline, linewidth=1)
-        axis.plot(
-            table["mean_forecast"],
-            table["observed_rate"],
-            color=theme.series[0],
-            **_marker_style(theme, theme.series[0]),
-        )
-        axis.set_title(f"{horizon} days before", loc="left")
-        axis.set_xlabel("Forecast probability")
-        axis.set_xlim(0, 1)
-        axis.set_ylim(0, 1)
-    axes[0].set_ylabel("Observed YES rate")
-    figure.suptitle(
-        "Normalized market price: forecast vs. observed",
-        x=0.01,
-        ha="left",
-        fontsize=12,
-        fontweight="semibold",
-        color=theme.ink_primary,
-    )
-    return figure
-
-
 def save_all_figures(
-    scores: pd.DataFrame,
-    differences: pd.DataFrame,
-    predictions: pd.DataFrame,
-    output_dir: Path,
+    scores: pd.DataFrame, differences: pd.DataFrame, output_dir: Path
 ) -> list[Path]:
     """Render every figure in both themes; returns the written paths."""
     plt.switch_backend("Agg")
     output_dir.mkdir(parents=True, exist_ok=True)
-    market_stages = list(LAYER_STAGES)
     builders = {
         "market_by_horizon": lambda theme: plot_market_by_horizon(scores, theme),
         "layers_vs_market": lambda theme: plot_differences(
             differences,
-            market_stages,
+            list(LAYER_STAGES),
             ["logistic", "clogit"],
             "Adding information layers on top of the market's price",
             theme,
@@ -214,7 +187,6 @@ def save_all_figures(
             theme,
         ),
         "fundamentals_only": lambda theme: plot_fundamentals(scores, theme),
-        "market_calibration": lambda theme: plot_calibration(predictions, theme),
     }
     written = []
     for theme in THEMES:
