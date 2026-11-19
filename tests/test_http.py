@@ -66,3 +66,10 @@ def test_min_interval_spaces_consecutive_requests(fake_clock):
     fake_clock.now += 3.0
     client.get(URL)
     assert fake_clock.sleeps == [7.0]
+
+
+def test_retry_after_header_extends_the_backoff(fake_clock):
+    outcomes = [FakeResponse(429, headers={"Retry-After": "30"}), FakeResponse(200, "ok")]
+    client, _ = make_client(outcomes, fake_clock)
+    assert client.get(URL).text == "ok"
+    assert fake_clock.sleeps == [30.0]

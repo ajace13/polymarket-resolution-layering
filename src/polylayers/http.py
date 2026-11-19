@@ -76,7 +76,7 @@ class PoliteClient:
                 raise RetriesExhaustedError(
                     f"GET {url} failed {failed_attempts} times; last error: {failure}"
                 )
-            delay = self.policy.backoff_seconds(failed_attempts)
+            delay = max(self.policy.backoff_seconds(failed_attempts), retry_after_seconds(response))
             if deadline is not None and self._clock() + delay > deadline:
                 raise DeadlineReachedError(
                     f"GET {url} still failing at the deadline; last error: {failure}"
@@ -104,3 +104,14 @@ class PoliteClient:
         remaining = self.policy.min_interval_seconds - elapsed
         if remaining > 0:
             self._sleep(remaining)
+
+
+def retry_after_seconds(response: requests.Response | None) -> float:
+    """Seconds requested by a numeric `Retry-After` header; 0 when absent or not numeric."""
+    if response is None:
+        return 0.0
+    value = response.headers.get("Retry-After", "")
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        return 0.0

@@ -1,5 +1,6 @@
 """Test doubles shared across the suite: no test touches the network or really sleeps."""
 
+import json
 from dataclasses import dataclass, field
 
 import pytest
@@ -9,6 +10,14 @@ import pytest
 class FakeResponse:
     status_code: int
     text: str = ""
+    headers: dict = field(default_factory=dict)
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
 @dataclass
