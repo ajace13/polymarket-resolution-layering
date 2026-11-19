@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from polylayers.evaluation.experiment import GNN_STAGES, REFERENCE_MODEL
-from polylayers.features.panel import FUNDAMENTAL_STAGES, LAYER_STAGES
+from polylayers.evaluation.experiment import GNN_STAGES, MARKET_MODEL, RECALIBRATED_MODEL
+from polylayers.features.panel import LAYER_STAGES
 from polylayers.reporting.theme import THEMES, Theme, apply_theme
 
 logger = logging.getLogger(__name__)
@@ -16,18 +16,24 @@ logger = logging.getLogger(__name__)
 HORIZON_ORDER = [30, 14, 7, 1]
 MODEL_LABELS = {
     "uniform": "Uniform over buckets",
+    "bucket_base_rate": "Bucket base rate",
     "market_raw": "Market price",
     "market_norm": "Market price (normalized)",
+    "market_recalibrated": "Market price, recalibrated",
     "logistic": "Logistic regression",
     "clogit": "Conditional logit",
     "gcn": "GCN",
     "graphconv": "GraphConv",
+    "gcn_no_edges": "GCN, no edges",
+    "gcn_cross_meeting": "GCN, cross-meeting edges only",
+    "gcn_rivals_traders": "GCN, same-meeting + trader edges only",
 }
 STAGE_LABELS = {
-    "market": "Market only",
-    "market+macro": "+ macro",
-    "market+macro+news": "+ news",
-    "market+macro+news+text": "+ Fed text",
+    "market": "Market price",
+    "market+trading": "+ trading",
+    "market+trading+macro": "+ macro",
+    "market+trading+macro+news": "+ news",
+    "market+trading+macro+news+text": "+ Fed text",
     "macro": "Macro",
     "macro+news": "Macro + news",
     "macro+news+text": "Macro + news + text",
@@ -62,30 +68,44 @@ def _line_by_horizon(axis, frame: pd.DataFrame, metric: str, color: str, label: 
     )
 
 
+def _rows(scores: pd.DataFrame, model: str, stage: str = "-") -> pd.DataFrame:
+    return scores[(scores["model"] == model) & (scores["stage"] == stage)]
+
+
 def plot_market_by_horizon(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
-    """How much the market already knows: top-1 accuracy and Brier score by horizon."""
-    figure, axes = plt.subplots(1, 2, figsize=(9, 3.6), layout="constrained")
-    market = scores[scores["model"] == REFERENCE_MODEL]
-    uniform = scores[scores["model"] == "uniform"]
+    """The market, its recalibrated version, and the naive bucket base rate by horizon."""
+    figure, axes = plt.subplots(1, 2, figsize=(9.5, 3.7), layout="constrained")
+    colors = {
+        MARKET_MODEL: theme.series[0],
+        RECALIBRATED_MODEL: theme.series[1],
+        "bucket_base_rate": theme.series[2],
+    }
+    # Temperature scaling never changes a meeting's favorite, so the recalibrated price would
+    # sit exactly on top of the market in the top-1 panel; it is drawn only for Brier.
     panels = (
-        ("top1_accuracy", "Market favorite wins", "Share of test meetings"),
-        ("brier", "Brier score (lower is better)", "Brier score"),
+        (
+            "top1_accuracy",
+            "Favorite bucket wins",
+            "Share of test meetings",
+            [MARKET_MODEL, "bucket_base_rate"],
+        ),
+        ("brier", "Brier score (lower is better)", "Brier score", list(colors)),
     )
-    for axis, (metric, title, ylabel) in zip(axes, panels, strict=True):
-        _line_by_horizon(
-            axis, market, metric, theme.series[0], MODEL_LABELS[REFERENCE_MODEL], theme
-        )
-        _line_by_horizon(axis, uniform, metric, theme.ink_muted, MODEL_LABELS["uniform"], theme)
+    for axis, (metric, title, ylabel, models) in zip(axes, panels, strict=True):
+        for model in models:
+            _line_by_horizon(
+                axis, _rows(scores, model), metric, colors[model], MODEL_LABELS[model], theme
+            )
         axis.set_title(title, loc="left")
         axis.set_ylabel(ylabel)
         _horizon_axis(axis)
     axes[0].set_ylim(0, 1.05)
-    axes[0].legend(loc="center right")
+    axes[1].legend(loc="center right")
     return figure
 
 
 def _forest(axis, rows: pd.DataFrame, stages: list[str], models: list[str], theme: Theme):
-    """Dot-and-whisker plot of differences vs. the market, one row per stage."""
+    """Dot-and-whisker plot of differences vs. a reference, one row per stage."""
     offsets = np.linspace(-0.18, 0.18, len(models)) if len(models) > 1 else [0.0]
     for slot, (model, offset) in enumerate(zip(models, offsets, strict=True)):
         color = theme.series[slot]
@@ -107,9 +127,14 @@ def _forest(axis, rows: pd.DataFrame, stages: list[str], models: list[str], them
 
 
 def plot_differences(
-    differences: pd.DataFrame, stages: list[str], models: list[str], title: str, theme: Theme
+    differences: pd.DataFrame,
+    reference: str,
+    stages: list[str],
+    models: list[str],
+    title: str,
+    theme: Theme,
 ) -> plt.Figure:
-    """Brier difference vs. the market (95% interval) per stage, one panel per horizon."""
+    """Brier difference vs. `reference` (95% interval) per stage, one panel per horizon."""
     figure, axes = plt.subplots(
         1,
         len(HORIZON_ORDER),
@@ -117,11 +142,15 @@ def plot_differences(
         sharey=True,
         layout="constrained",
     )
-    brier = differences[(differences["metric"] == "brier") & differences["model"].isin(models)]
+    brier = differences[
+        (differences["metric"] == "brier")
+        & (differences["reference"] == reference)
+        & differences["model"].isin(models)
+    ]
     for axis, horizon in zip(axes, HORIZON_ORDER, strict=True):
         _forest(axis, brier[brier["horizon_days"] == horizon], stages, models, theme)
         axis.set_title(horizon_title(horizon), loc="left")
-        axis.set_xlabel("Brier difference vs. market")
+        axis.set_xlabel("Brier difference")
     # The y-axis is shared, so invert it once: stages read top to bottom in the order added.
     axes[0].invert_yaxis()
     handles, labels = axes[0].get_legend_handles_labels()
@@ -133,60 +162,82 @@ def plot_differences(
 
 
 def plot_fundamentals(scores: pd.DataFrame, theme: Theme) -> plt.Figure:
-    """Can fundamentals alone pick the outcome? Brier by horizon without market prices."""
+    """Without the market's price: macro models vs. the bucket base rate (and the market)."""
     figure, axis = plt.subplots(figsize=(7.5, 3.8), layout="constrained")
-    best_stage = list(FUNDAMENTAL_STAGES)[-1]
-    stage_text = STAGE_LABELS[best_stage].lower()
     lines = [
-        (
-            scores[scores["model"] == REFERENCE_MODEL],
-            theme.series[0],
-            MODEL_LABELS[REFERENCE_MODEL],
-        ),
-        (
-            scores[(scores["model"] == "clogit") & (scores["stage"] == best_stage)],
-            theme.series[1],
-            f"Conditional logit, {stage_text}",
-        ),
-        (
-            scores[(scores["model"] == "logistic") & (scores["stage"] == best_stage)],
-            theme.series[2],
-            f"Logistic regression, {stage_text}",
-        ),
-        (scores[scores["model"] == "uniform"], theme.ink_muted, MODEL_LABELS["uniform"]),
+        (_rows(scores, MARKET_MODEL), theme.series[0], MODEL_LABELS[MARKET_MODEL]),
+        (_rows(scores, "logistic", "macro"), theme.series[1], "Logistic regression, macro"),
+        (_rows(scores, "clogit", "macro"), theme.series[2], "Conditional logit, macro"),
+        (_rows(scores, "bucket_base_rate"), theme.ink_muted, MODEL_LABELS["bucket_base_rate"]),
     ]
     for frame, color, label in lines:
         _line_by_horizon(axis, frame, "brier", color, label, theme)
-    axis.set_title("Fundamentals alone vs. the market (Brier, lower is better)", loc="left")
+    axis.set_title("Without the market's price (Brier, lower is better)", loc="left")
     axis.set_ylabel("Brier score")
     _horizon_axis(axis)
     axis.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0))
     return figure
 
 
+def plot_temperatures(temperatures: pd.DataFrame, theme: Theme) -> plt.Figure:
+    """Fitted temperature of the market price per test meeting (beta > 1: underconfident)."""
+    figure, axis = plt.subplots(figsize=(8, 3.6), layout="constrained")
+    horizons = [30, 7, 1]
+    for slot, horizon in enumerate(horizons):
+        rows = temperatures[temperatures["horizon_days"] == horizon].copy()
+        rows["meeting"] = pd.to_datetime(rows["test_meeting"])
+        color = theme.series[slot]
+        axis.plot(
+            rows["meeting"],
+            rows["beta"],
+            color=color,
+            label=horizon_title(horizon),
+            **_marker_style(theme, color),
+        )
+    axis.axhline(1.0, color=theme.baseline, linewidth=1)
+    axis.set_yscale("log")
+    ticks = [0.5, 1, 2, 4, 8]
+    axis.set_yticks(ticks)
+    axis.set_yticklabels([f"{tick:g}" for tick in ticks])
+    axis.minorticks_off()
+    axis.set_title(
+        "Temperature that best recalibrates the market, fit on past meetings", loc="left"
+    )
+    axis.set_ylabel("beta (log scale; 1 = calibrated)")
+    handles, labels = axis.get_legend_handles_labels()
+    figure.legend(handles, labels, loc="outside lower left", ncol=len(horizons))
+    return figure
+
+
 def save_all_figures(
-    scores: pd.DataFrame, differences: pd.DataFrame, output_dir: Path
+    scores: pd.DataFrame,
+    differences: pd.DataFrame,
+    temperatures: pd.DataFrame,
+    output_dir: Path,
 ) -> list[Path]:
     """Render every figure in both themes; returns the written paths."""
     plt.switch_backend("Agg")
     output_dir.mkdir(parents=True, exist_ok=True)
     builders = {
         "market_by_horizon": lambda theme: plot_market_by_horizon(scores, theme),
-        "layers_vs_market": lambda theme: plot_differences(
+        "layers_vs_recalibrated_market": lambda theme: plot_differences(
             differences,
+            RECALIBRATED_MODEL,
             list(LAYER_STAGES),
             ["logistic", "clogit"],
-            "Adding information layers on top of the market's price",
+            "What each layer adds on top of the recalibrated market price",
             theme,
         ),
-        "graph_models_vs_market": lambda theme: plot_differences(
+        "graph_models": lambda theme: plot_differences(
             differences,
+            RECALIBRATED_MODEL,
             list(GNN_STAGES),
             ["logistic", "gcn", "graphconv"],
-            "Graph networks vs. a flat model, relative to the market",
+            "Graph networks vs. a flat model, relative to the recalibrated market price",
             theme,
         ),
         "fundamentals_only": lambda theme: plot_fundamentals(scores, theme),
+        "market_temperature": lambda theme: plot_temperatures(temperatures, theme),
     }
     written = []
     for theme in THEMES:

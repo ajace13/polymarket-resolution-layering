@@ -15,6 +15,7 @@ from polylayers.features.panel import build_panel
 from polylayers.fomc_calendar import meetings_between
 from polylayers.graph.wallets import wallet_first_trades
 from polylayers.http import PoliteClient
+from polylayers.models.recalibration import temperatures_by_fold
 from polylayers.paths import (
     FIGURES_DIR,
     INTERIM_DIR,
@@ -149,25 +150,31 @@ def run_evaluate(args: argparse.Namespace) -> None:
         panel, wallets, default_model_specs(), settings.evaluation.min_train_meetings
     )
     scores, differences = summarize(predictions, settings.evaluation.bootstrap_resamples)
+    temperatures = temperatures_by_fold(panel, settings.evaluation.min_train_meetings)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     predictions.to_parquet(RESULTS_DIR / "predictions.parquet", index=False)
     scores.to_csv(RESULTS_DIR / "scores.csv", index=False)
-    differences.to_csv(RESULTS_DIR / "differences_vs_market.csv", index=False)
+    differences.to_csv(RESULTS_DIR / "differences.csv", index=False)
+    temperatures.to_csv(RESULTS_DIR / "temperatures.csv", index=False)
     logger.info(
-        "Wrote reports/results/: predictions %s, scores %s, differences %s",
+        "Wrote reports/results/: predictions %s, scores %s, differences %s, temperatures %s",
         predictions.shape,
         scores.shape,
         differences.shape,
+        temperatures.shape,
     )
 
 
 def run_report(args: argparse.Namespace) -> None:
     """Figures (light and dark) and a markdown summary from the evaluation results."""
+    predictions = pd.read_parquet(RESULTS_DIR / "predictions.parquet")
     scores = pd.read_csv(RESULTS_DIR / "scores.csv")
-    differences = pd.read_csv(RESULTS_DIR / "differences_vs_market.csv")
-    save_all_figures(scores, differences, FIGURES_DIR)
+    differences = pd.read_csv(RESULTS_DIR / "differences.csv")
+    temperatures = pd.read_csv(RESULTS_DIR / "temperatures.csv")
+    save_all_figures(scores, differences, temperatures, FIGURES_DIR)
+    summary = summary_markdown(scores, differences, predictions, temperatures)
     summary_path = RESULTS_DIR / "summary.md"
-    summary_path.write_text(summary_markdown(scores, differences), encoding="utf-8")
+    summary_path.write_text(summary, encoding="utf-8")
     logger.info("Wrote %s", summary_path.relative_to(PROJECT_ROOT))
 
 

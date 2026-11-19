@@ -101,9 +101,22 @@ three relations does not get three times the message weight.
 
 ## 5. Models
 
+Reference forecasts:
+
 - **Uniform:** 1 / (number of buckets listed), the no-information reference.
-- **Market:** the raw YES price, and the price normalized within the meeting. The normalized
-  price is **the baseline every other model is measured against**.
+- **Bucket base rate:** how often each kind of move (hold, small cut, large cut, small hike,
+  large hike) won in the training meetings, normalized within the meeting. In this period
+  it amounts to "the Fed usually holds". It is the honest naive baseline for any model that
+  does not see the market's price.
+- **Market price:** the raw YES price, and the price normalized within the meeting.
+- **Recalibrated market price:** the normalized price, temperature-scaled. The forecast is
+  softmax(β · logit(p)) within each meeting, with the single parameter β fit on past
+  meetings. β > 1 means the market was underconfident; β < 1 means it was overconfident. A
+  model that beats the raw price may only be fixing its calibration. **The recalibrated
+  price is the baseline every information layer is measured against.**
+
+Learned models:
+
 - **Logistic regression,** per market, L2-regularized. The strength is chosen on the four
   most recent training meetings, by log loss. There is no class weighting: class weights
   would deliberately distort the probabilities this evaluation scores.
@@ -112,10 +125,15 @@ three relations does not get three times the message weight.
 - **GCN and GraphConv:** two layers of 32 hidden units, trained transductively for 150
   epochs (no tuning) and averaged over five seeds. GCN averages a node with its neighbors
   through one shared weight matrix. GraphConv keeps separate weights for the node and its
-  neighbors, so it can learn contrasts across the heterophilous same-meeting edges.
+  neighbors.
+- **GCN ablations:** GCN on parts of the graph, used to find what breaks it:
+  - no edges, which leaves a per-node network;
+  - cross-meeting edges only (temporal and same bucket);
+  - same-meeting and trader-overlap edges only.
 
-Each model is trained on cumulative layer stages: market only, then adding macro, news,
-and text. The fundamentals-only stages drop the market entirely.
+Each learned model is trained on cumulative layer stages: the market's price, then its
+trading activity, then macro, news, and text. The fundamentals-only stages drop the market
+entirely.
 
 ## 6. Evaluation
 
@@ -130,46 +148,79 @@ Metrics:
 - AUC.
 - Top-1 accuracy: whether a model's favorite bucket is the one that won.
 
-Differences against the market come with 95% intervals from a paired bootstrap that
-resamples meetings (2,000 resamples).
+Differences come with 95% intervals from a paired bootstrap that resamples meetings (2,000
+resamples). Each learned model is compared with the raw and with the recalibrated market
+price; fundamentals-only models are also compared with the bucket base rate. With 18–19
+test meetings and dozens of comparisons, a single interval that barely excludes zero
+should be read as suggestive, not settled.
 
 ## 7. Results
 
 GDELT was still throttled when I ran this evaluation, so the news layer here is the SF Fed
 sentiment index alone. The GDELT columns were empty and were dropped in every fold.
 
-**How good is the market?** Brier score (lower is better) and the share of meetings where the forecaster's favorite bucket won.
+**How good is the market?** Brier score (lower is better) and the share of test meetings where the forecaster's favorite bucket won.
 
 | Forecaster | 30d Brier | 30d top-1 | 14d Brier | 14d top-1 | 7d Brier | 7d top-1 | 1d Brier | 1d top-1 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Uniform over buckets | 0.172 | 6% | 0.173 | 5% | 0.173 | 5% | 0.173 | 5% |
+| Bucket base rate | 0.137 | 61% | 0.133 | 63% | 0.133 | 63% | 0.133 | 63% |
 | Market price | 0.054 | 83% | 0.024 | 95% | 0.022 | 95% | 0.008 | 100% |
 | Market price (normalized) | 0.054 | 83% | 0.024 | 95% | 0.022 | 95% | 0.008 | 100% |
-| Logistic regression · Macro + news + text | 0.155 | 61% | 0.156 | 63% | 0.164 | 63% | 0.134 | 63% |
-| Conditional logit · Macro + news + text | 0.197 | 44% | 0.161 | 53% | 0.146 | 58% | 0.138 | 63% |
+| Market price, recalibrated | 0.063 | 83% | 0.025 | 95% | 0.028 | 95% | 0.002 | 100% |
 
-**Does anything improve on it?** Brier difference vs. the normalized market price, with a 95% interval from a meeting-level paired bootstrap (negative = better than the market).
+**Is the market calibrated?** The temperature (beta) that best recalibrates the normalized price, fit walk-forward on past meetings (beta > 1: the market was underconfident), and what the recalibration gains over the raw price.
+
+| | 30d | 14d | 7d | 1d |
+|---|---:|---:|---:|---:|
+| Median fitted temperature (beta) | 1.00 | 0.85 | 0.90 | 7.18 |
+| Recalibrated minus raw market, Brier | +0.0092 [-0.0098, +0.0355] | +0.0013 [-0.0069, +0.0152] | +0.0060 [-0.0057, +0.0276] | -0.0060 [-0.0139, -0.0008] |
+
+**Does any layer add information?** Brier difference vs. the recalibrated market price, with a 95% interval from a meeting-level paired bootstrap (negative = better than the recalibrated market).
 
 | Forecaster | 30d | 14d | 7d | 1d |
 |---|---:|---:|---:|---:|
-| Logistic regression · Market only | +0.0413 [+0.0052, +0.0897] | +0.0466 [+0.0113, +0.0929] | +0.0377 [+0.0055, +0.0860] | +0.0143 [-0.0014, +0.0328] |
-| Logistic regression · + macro | +0.0458 [+0.0084, +0.0959] | +0.0383 [+0.0069, +0.0844] | +0.0458 [+0.0112, +0.0945] | +0.0137 [-0.0016, +0.0304] |
-| Logistic regression · + news | +0.0458 [+0.0082, +0.0955] | +0.0413 [+0.0092, +0.0878] | +0.0423 [+0.0092, +0.0908] | +0.0149 [-0.0001, +0.0319] |
-| Logistic regression · + Fed text | +0.0429 [+0.0057, +0.0902] | +0.0424 [+0.0091, +0.0887] | +0.0431 [+0.0097, +0.0918] | +0.0162 [+0.0008, +0.0334] |
-| Conditional logit · Market only | +0.0141 [-0.0115, +0.0469] | +0.0742 [+0.0169, +0.1364] | +0.0464 [+0.0065, +0.0976] | +0.0149 [-0.0051, +0.0527] |
-| Conditional logit · + macro | +0.0287 [-0.0059, +0.0695] | +0.0143 [-0.0093, +0.0446] | +0.0324 [-0.0038, +0.0860] | -0.0065 [-0.0155, -0.0008] |
-| Conditional logit · + news | +0.0295 [-0.0054, +0.0695] | +0.0153 [-0.0091, +0.0479] | +0.0282 [-0.0085, +0.0821] | -0.0058 [-0.0132, -0.0008] |
-| Conditional logit · + Fed text | +0.0270 [-0.0042, +0.0647] | +0.0236 [-0.0013, +0.0559] | +0.0298 [-0.0076, +0.0844] | -0.0055 [-0.0124, -0.0008] |
-| GCN · Market only | +0.0861 [+0.0314, +0.1445] | +0.1073 [+0.0646, +0.1553] | +0.1097 [+0.0673, +0.1583] | +0.1251 [+0.0766, +0.1742] |
-| GCN · + Fed text | +0.0967 [+0.0382, +0.1643] | +0.1133 [+0.0675, +0.1648] | +0.1173 [+0.0705, +0.1721] | +0.1359 [+0.0780, +0.1999] |
-| GraphConv · Market only | +0.0190 [-0.0144, +0.0571] | +0.0425 [+0.0034, +0.0944] | +0.0314 [+0.0033, +0.0669] | +0.0096 [-0.0015, +0.0255] |
-| GraphConv · + Fed text | +0.0378 [-0.0026, +0.0912] | +0.0390 [-0.0001, +0.0905] | +0.0385 [-0.0011, +0.0920] | +0.0179 [+0.0015, +0.0376] |
+| Logistic regression · Market price | +0.0036 [-0.0003, +0.0078] | +0.0137 [+0.0022, +0.0322] | +0.0029 [-0.0017, +0.0074] | +0.0134 [+0.0002, +0.0401] |
+| Logistic regression · + trading | +0.0321 [+0.0099, +0.0614] | +0.0453 [+0.0157, +0.0803] | +0.0317 [+0.0101, +0.0599] | +0.0203 [+0.0013, +0.0435] |
+| Logistic regression · + macro | +0.0366 [+0.0131, +0.0676] | +0.0370 [+0.0114, +0.0707] | +0.0398 [+0.0142, +0.0697] | +0.0198 [+0.0044, +0.0366] |
+| Logistic regression · + news | +0.0366 [+0.0130, +0.0675] | +0.0400 [+0.0136, +0.0749] | +0.0363 [+0.0129, +0.0651] | +0.0210 [+0.0054, +0.0389] |
+| Logistic regression · + Fed text | +0.0337 [+0.0089, +0.0643] | +0.0411 [+0.0139, +0.0768] | +0.0371 [+0.0134, +0.0660] | +0.0222 [+0.0062, +0.0410] |
+| Conditional logit · Market price | +0.0064 [-0.0006, +0.0150] | +0.0213 [+0.0012, +0.0560] | +0.0202 [+0.0008, +0.0487] | +0.0219 [+0.0001, +0.0671] |
+| Conditional logit · + trading | +0.0048 [-0.0039, +0.0146] | +0.0729 [+0.0159, +0.1378] | +0.0404 [+0.0030, +0.0903] | +0.0210 [+0.0000, +0.0649] |
+| Conditional logit · + macro | +0.0195 [-0.0027, +0.0463] | +0.0130 [-0.0042, +0.0386] | +0.0264 [-0.0035, +0.0730] | -0.0005 [-0.0019, +0.0003] |
+| Conditional logit · + news | +0.0203 [-0.0026, +0.0493] | +0.0140 [-0.0035, +0.0418] | +0.0223 [-0.0076, +0.0708] | +0.0003 [+0.0000, +0.0007] |
+| Conditional logit · + Fed text | +0.0178 [-0.0003, +0.0431] | +0.0223 [+0.0029, +0.0505] | +0.0238 [-0.0075, +0.0733] | +0.0006 [+0.0000, +0.0015] |
+| GCN · Market price | +0.0758 [+0.0073, +0.1416] | +0.1065 [+0.0592, +0.1568] | +0.1043 [+0.0531, +0.1563] | +0.1306 [+0.0816, +0.1814] |
+| GCN · + Fed text | +0.0875 [+0.0103, +0.1656] | +0.1120 [+0.0608, +0.1662] | +0.1114 [+0.0543, +0.1697] | +0.1419 [+0.0828, +0.2062] |
+| GraphConv · Market price | +0.0238 [-0.0023, +0.0576] | +0.0105 [-0.0040, +0.0326] | +0.0143 [-0.0000, +0.0351] | +0.0177 [-0.0000, +0.0452] |
+| GraphConv · + Fed text | +0.0286 [+0.0003, +0.0651] | +0.0377 [+0.0043, +0.0787] | +0.0326 [+0.0018, +0.0683] | +0.0239 [+0.0054, +0.0461] |
+
+**Without the market's price.** Fundamentals-only models vs. the bucket base rate (how often each kind of move has won before): Brier difference with 95% interval.
+
+| Forecaster vs. bucket base rate | 30d | 14d | 7d | 1d |
+|---|---:|---:|---:|---:|
+| Logistic regression · Macro | +0.0142 [-0.0042, +0.0362] | +0.0146 [-0.0087, +0.0407] | -0.0113 [-0.0424, +0.0201] | -0.0191 [-0.0543, +0.0147] |
+| Logistic regression · Macro + news + text | +0.0184 [+0.0017, +0.0373] | +0.0228 [-0.0004, +0.0489] | +0.0313 [+0.0043, +0.0603] | +0.0010 [-0.0320, +0.0356] |
+| Conditional logit · Macro | +0.0440 [+0.0053, +0.0849] | +0.0132 [-0.0215, +0.0482] | -0.0120 [-0.0592, +0.0370] | -0.0143 [-0.0704, +0.0456] |
+| Conditional logit · Macro + news + text | +0.0598 [+0.0101, +0.1080] | +0.0281 [-0.0144, +0.0733] | +0.0129 [-0.0252, +0.0526] | +0.0051 [-0.0410, +0.0539] |
+
+**What breaks GCN?** GCN on subsets of the graph, with market price features.
+
+| Model (market price features) | 30d Brier · top-1 · favorite=hold | 14d Brier · top-1 · favorite=hold | 7d Brier · top-1 · favorite=hold | 1d Brier · top-1 · favorite=hold |
+|---|---:|---:|---:|---:|
+| GCN | 0.139 · 61% · 100% | 0.132 · 63% · 100% | 0.132 · 63% · 100% | 0.133 · 63% · 100% |
+| GCN, no edges | 0.085 · 78% · 61% | 0.038 · 89% · 63% | 0.048 · 89% · 63% | 0.017 · 95% · 63% |
+| GCN, cross-meeting edges only | 0.146 · 61% · 100% | 0.141 · 63% · 100% | 0.141 · 63% · 100% | 0.141 · 63% · 100% |
+| GCN, same-meeting + trader edges only | 0.180 · 28% · 17% | 0.175 · 32% · 21% | 0.175 · 37% · 21% | 0.173 · 32% · 26% |
+| GraphConv | 0.087 · 78% · 61% | 0.036 · 89% · 63% | 0.042 · 95% · 63% | 0.020 · 95% · 63% |
 
 ### 7.1 The market is very hard to beat
 
 Out of sample, the normalized market price picks the winning bucket at 83% of meetings 30
 days out, 95% at 14 and 7 days, and 100% the day before. Its Brier score falls from 0.054 to
 0.008. Normalizing barely matters: the buckets' prices already sum to almost exactly one.
+The naive bucket base rate (how often each kind of move has won before) picks 61–63%, with a
+Brier score of about 0.13. Its top-1 accuracy is just the share of holds in the test period.
 
 Point-in-time across all 31 meetings, the market's favorite lost at one horizon or more at
 four meetings:
@@ -185,56 +236,84 @@ These are the meetings a better forecaster would have to win. There are too few 
 learn from: a model that leans on the rates-implied path to win September 2026 also leans the
 wrong way in October 2026.
 
-### 7.2 Adding layers to the market's price
+### 7.2 Calibration: right a month out, too timid the night before
 
-At 30, 14, and 7 days, no model that starts from the market's price and adds macro data,
-news, or statement text improves on the price itself:
+To check calibration I fit a temperature walk-forward on past meetings: the β in
+softmax(β · logit(p)). At 30, 14, and 7 days the median fitted β is 1.00, 0.85, and 0.90.
+Recalibrating doesn't help there: the differences against the raw price are small and their
+intervals include zero.
 
-- Logistic regression is significantly worse at every stage. With 44–120 training markets
-  and 15–75 features, depending on the fold and the stage, it pays for its own estimation
-  noise.
-- The conditional logit with macro features comes closest: +0.014 to +0.032 Brier, with
-  intervals that include zero.
+One day out the median β is **7.2**, and every fold's estimate falls between 3.3 and 8.5.
+The market is strongly underconfident the night before a decision:
 
-One day out, the conditional logit with macro features beats the market: Brier −0.0065 (95%
-interval −0.0155 to −0.0008), and log loss 0.013 against the market's 0.042. Adding news and
-text on top neither helps nor hurts. The mechanism is sharpening, not new information:
+- The median probability it puts on the eventual winner is 0.956.
+- It leaves about 2.5% on each losing bucket.
+- Raising its probabilities to roughly the 7th power and renormalizing cuts the Brier score
+  from 0.0080 to 0.0019 (difference −0.0060, 95% interval −0.0139 to −0.0008).
 
-| 1 day before | Market | Conditional logit, market + macro |
-|---|---:|---:|
-| Median probability on the winning bucket | 0.956 | 0.995 |
-| Lowest probability on a winning bucket | 0.526 | 0.767 |
-| Mean probability on a losing bucket | 0.025 | 0.0095 |
+That one-parameter correction is the only improvement over the market in this study. A
+plausible cause is the cost of holding: buying a near-certain winner at 0.96 the night before
+ties up capital until resolution and carries tail risk. That would make some underconfidence
+an equilibrium rather than a mistake.
 
-The night before a decision, the market still leaves about 2.5% on each losing bucket. Some
-of that is probably the cost of tying up capital, plus the familiar longshot premium in
-prediction markets. The macro interactions matter because they keep the sharpening from
-making confident mistakes. The same model without them (market features only) assigns one
-eventual winner a probability of 0.02.
+The fitted temperatures also show how unstable longer-horizon calibration is. The first few
+folds (fit on 2023 to mid-2024) wanted to sharpen the market at every horizon. The September
+2024 surprise flipped the 30- and 7-day fits to slightly *flatten* it, and they have stayed
+near 1 since. Only the 1-day underconfidence holds across the whole sample.
 
-### 7.3 Fundamentals without the market
+### 7.3 Adding layers to the recalibrated price
 
-Using only the bucket encoding and the macro layer, logistic regression picks the winning
-bucket at 61–74% of meetings, against 5% for a uniform guess. Its Brier score (0.11–0.15)
-beats uniform (0.17). Almost all of that comes from the rates block: the Treasury bill
-spreads to EFFR are themselves a market forecast of the decision. Adding SF Fed sentiment and
-statement text makes the fundamentals-only models *worse* at most horizons. With 11–30
-training meetings, extra meeting-level features mostly add variance.
+Each layer is measured against the recalibrated market. Any calibration gain is already in
+that reference, so what remains is information.
 
-### 7.4 Graph networks
+- **The price itself.** A logistic regression on the market's price features alone
+  essentially reproduces the market: its differences against the raw market price all have
+  intervals including zero.
+- **Trading activity** (wallet counts, trade counts, volume, net YES flow) makes logistic
+  regression significantly worse at every horizon, by 0.020–0.045 Brier against the
+  recalibrated price. With 44–120 training markets per fold, these features add variance,
+  not information.
+- **Macro.** At 1 day, the conditional logit with the market, trading, and macro layers
+  matches the recalibrated market (−0.0005, interval −0.0019 to +0.0003). Before I added the
+  recalibration baseline, this looked like the model beating the market. It was the
+  calibration correction showing up through a richer model.
+- **News and text** add nothing, or slightly hurt: +0.0003 and +0.0006 at 1 day.
 
-| Brier difference (95% interval) | 30 days | 14 days | 7 days | 1 day |
-|---|---:|---:|---:|---:|
-| GraphConv − GCN, market features | −0.067 [−0.133, +0.006] | −0.065 [−0.123, +0.001] | −0.078 [−0.126, −0.038] | −0.116 [−0.167, −0.064] |
-| GraphConv − logistic, market features | −0.022 [−0.081, +0.021] | −0.004 [−0.032, +0.021] | −0.006 [−0.042, +0.028] | −0.005 [−0.024, +0.018] |
+### 7.4 Fundamentals without the market
 
-GCN collapses. Its favorite bucket is "hold" at every test meeting, so its top-1 accuracy
-equals the share of holds in the test period (63%) at every horizon. This is the
-over-smoothing failure predicted in section 5: same-meeting edges join rivals, and averaging
-a node with its rivals erases the price differences that identify the favorite. GraphConv,
-which keeps a separate weight for the node itself, avoids the collapse. It is significantly
-better than GCN at 7 and 1 days, and statistically indistinguishable from the flat logistic
-regression.
+Without the market's price, the honest comparison is the bucket base rate, not a uniform
+guess. Macro-only models never beat it significantly:
+
+- Logistic regression on macro is +0.014 and +0.015 Brier at 30 and 14 days, and −0.011 and
+  −0.019 at 7 and 1 day. Every interval includes zero.
+- Adding news and text makes the fundamentals-only models worse, significantly so at 30 and
+  7 days for logistic regression.
+
+Most of what macro data knows about the next decision lives in the rates block. The Treasury
+bill spreads to EFFR are themselves a market forecast, and by the time anyone can use them,
+Polymarket has priced the same information.
+
+### 7.5 Graph networks: the edges break GCN
+
+The full-graph GCN picks "hold" as its favorite at every test meeting, at every horizon, so
+its top-1 accuracy is the share of holds in the test period. I reran it on parts of the
+graph to locate the cause (see "What breaks GCN?" above):
+
+- **No edges.** GCN reduces to a per-node network and works: Brier 0.017 at 1 day, top-1
+  accuracy 78–95%. It is statistically indistinguishable from the flat logistic regression.
+- **Cross-meeting edges only** (temporal and same bucket). It collapses to "always hold" again.
+  Averaging each market with same-kind markets at other meetings replaces its own price with
+  its bucket's typical value, and holds win most often.
+- **Same-meeting and trader-overlap edges only.** It does *worse than uniform* (Brier
+  0.17–0.18, top-1 28–37%). Averaging a meeting's rival buckets together erases the price
+  gap that identifies the favorite.
+
+My first explanation, that heterophilous same-meeting edges cause the collapse, was only
+half right. Those edges do hurt GCN, but dropping them does not prevent the collapse; the
+cross-meeting edges cause it. GraphConv keeps a separate weight for each node's own
+features, so it avoids both failure modes. It lands in the same range as the edgeless GCN and
+the flat logistic regression (every interval against the flat model includes zero), and it
+does not beat the market.
 
 The graph's own structure explains why it adds little. In the graph built over every market,
 the share of edges joining two markets with the same outcome is:
@@ -247,24 +326,23 @@ the share of edges joining two markets with the same outcome is:
 | trader overlap | 0.62 | 0.09 |
 | *random pair* | *0.63* | *0.06* |
 
-Same-meeting edges are heterophilous by construction (a meeting never has two winners). Only
-same-bucket edges are mildly homophilous, because holds cluster in time. Trader-overlap edges
-join same-outcome markets at the random-pair rate: traders who trade several buckets of the
-same meeting say nothing about which bucket wins.
+Trader-overlap edges join same-outcome markets at the random-pair rate. Traders who trade
+several buckets of the same meeting say nothing about which bucket wins.
 
-### 7.5 Takeaways
+### 7.6 Takeaways
 
 1. On Fed decisions, Polymarket is an excellent forecaster at every horizon I tested. The
-   honest baseline for any model here is the market's price, not a majority-class guess.
-2. Public macro data contains real signal about the decision, but bond markets have priced it
-   by the time Polymarket does. It helps only as a guardrail when sharpening the market's
-   near-certain calls on the eve of the meeting.
-3. News sentiment, statement text, and trader-network structure added nothing measurable at
-   this sample size. With 18–19 test meetings, small real effects would be invisible. The
-   intervals rule out large gains, not small ones.
-4. For graph learning on mutually exclusive outcomes, the choice of convolution matters more
-   than the graph: a smoothing operator (GCN) fails, while one with a separate self weight
-   (GraphConv) matches a flat model.
+   honest baselines here are the market's own price and "the Fed usually holds", not a uniform
+   guess.
+2. The market is calibrated a month out but underconfident the night before. A one-parameter
+   recalibration is the only thing that beats it.
+3. Trading activity, macro data, news sentiment, Fed text, and trader-network structure add
+   no measurable information beyond the price. With 18–19 test meetings, the intervals rule
+   out large gains, not small ones.
+4. For graph learning on mutually exclusive outcomes, edges can destroy signal. Smoothing
+   across meetings reduces GCN to a base rate, and smoothing across rivals erases the
+   favorite. A convolution with a separate self weight is needed just to match a model with
+   no graph at all.
 
 ## 8. What changed from my first version
 

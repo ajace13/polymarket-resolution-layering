@@ -209,3 +209,82 @@ def test_paired_bootstrap_detects_a_uniformly_better_forecaster():
     assert result["difference"] < 0
     assert result["ci_high"] < 0
     assert result["p_candidate_better"] == 1.0
+
+
+# --------------------------------------------------------------------------- baselines and recalibration
+
+
+def test_bucket_base_rate_learns_that_holds_usually_win():
+    from polylayers.models.baselines import bucket_base_rate
+
+    train = pd.DataFrame(
+        {
+            "meeting_id": ["m1", "m1", "m2", "m2", "m3", "m3"],
+            "bucket_group": ["hold", "cut_small"] * 3,
+            "label": [1, 0, 1, 0, 0, 1],
+        }
+    )
+    test = pd.DataFrame(
+        {"meeting_id": ["m4", "m4", "m4"], "bucket_group": ["hold", "cut_small", "hike_small"]}
+    )
+    probabilities = bucket_base_rate(train, test)
+    assert probabilities.sum() == pytest.approx(1.0)
+    assert probabilities[0] > probabilities[1]
+
+
+def test_recalibration_sharpens_an_underconfident_market():
+    from polylayers.models.recalibration import fit_temperature
+
+    rng = np.random.default_rng(1)
+    rows = []
+    for meeting in range(40):
+        winner = rng.integers(0, 3)
+        for bucket in range(3):
+            # The market gives the eventual winner 0.6 and the others 0.2: right but timid.
+            price = 0.6 if bucket == winner else 0.2
+            rows.append(
+                {
+                    "meeting_id": meeting,
+                    "mkt_logit_norm": np.log(price / (1 - price)),
+                    "label": int(bucket == winner),
+                }
+            )
+    model = fit_temperature(pd.DataFrame(rows))
+    assert model.weights_.detach()[0].item() > 1.5
+
+
+def test_gnn_runs_with_a_subset_of_edge_types():
+    from polylayers.models.gnn import fit_predict_gnn
+
+    rng = np.random.default_rng(2)
+    rows = []
+    for meeting in range(6):
+        for bucket, (group, move) in enumerate(
+            (("hold", 0.0), ("cut_small", -25.0), ("hike_small", 25.0))
+        ):
+            rows.append(
+                {
+                    "market_id": f"{meeting}-{bucket}",
+                    "meeting_id": f"2024-0{meeting + 1}-20",
+                    "decision_date": pd.Timestamp(f"2024-0{meeting + 1}-20"),
+                    "forecast_time": pd.Timestamp(f"2024-0{meeting + 1}-13", tz="UTC"),
+                    "bucket_group": group,
+                    "bucket_move_bps": move,
+                    "bucket_open_ended": 0.0,
+                    "bucket_is_hold": float(group == "hold"),
+                    "mkt_price": rng.uniform(),
+                    "label": int(bucket == 0),
+                }
+            )
+    frame = pd.DataFrame(rows)
+    from polylayers.models import design
+
+    groups = ("bucket",)
+    train, test = frame.iloc[:15], frame.iloc[15:]
+    empty_wallets = pd.DataFrame(columns=["market_id", "wallet_id", "first_trade_at"])
+    for edge_types in ((), ("same_meeting",)):
+        probabilities = fit_predict_gnn(
+            "gcn", train, test, groups, empty_wallets, edge_types=edge_types
+        )
+        assert probabilities.shape == (3,)
+    assert design.FEATURE_GROUPS["bucket"]

@@ -3,7 +3,8 @@
 Feature groups:
 - bucket:  what the market pays out on (signed move in bps, open-ended flag, hold flag)
 - market:  the market's own price, within-meeting normalized probability, momentum
-- trading: wallets, trades, USD volume, and net YES flow before the forecast
+- trading: wallets, trades, USD volume, and net YES flow before the forecast (its own layer,
+           so trading activity is tested separately from the price)
 - macro:   rates-implied policy path, inflation, labor, activity, financial conditions
 - news:    SF Fed news sentiment and GDELT coverage/tone
 - text:    the latest FOMC statement's action, guidance, tone, and dissents
@@ -47,12 +48,14 @@ FEATURE_GROUPS: dict[str, list[str]] = {
 }
 MEETING_LEVEL_GROUPS = ("macro", "news", "text")
 
-# Cumulative information layers compared in the evaluation, in the order they are added.
+# Cumulative information layers compared in the evaluation, in the order they are added:
+# the market's price, then its trading activity, then outside information.
 LAYER_STAGES: dict[str, tuple[str, ...]] = {
-    "market": ("bucket", "market", "trading"),
-    "market+macro": ("bucket", "market", "trading", "macro"),
-    "market+macro+news": ("bucket", "market", "trading", "macro", "news"),
-    "market+macro+news+text": ("bucket", "market", "trading", "macro", "news", "text"),
+    "market": ("bucket", "market"),
+    "market+trading": ("bucket", "market", "trading"),
+    "market+trading+macro": ("bucket", "market", "trading", "macro"),
+    "market+trading+macro+news": ("bucket", "market", "trading", "macro", "news"),
+    "market+trading+macro+news+text": ("bucket", "market", "trading", "macro", "news", "text"),
 }
 # The same layers without the market's own price: can fundamentals alone pick the outcome?
 FUNDAMENTAL_STAGES: dict[str, tuple[str, ...]] = {

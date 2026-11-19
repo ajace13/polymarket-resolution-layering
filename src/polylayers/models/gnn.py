@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GraphConv
 
-from polylayers.graph.edges import GraphSettings, build_edges, collapse_edges
+from polylayers.graph.edges import EDGE_TYPES, GraphSettings, build_edges, collapse_edges
 from polylayers.models.baselines import clip_probability
 from polylayers.models.design import StageDesign
 
@@ -40,8 +40,9 @@ class GraphNet(torch.nn.Module):
     def __init__(self, convolution: str, input_dim: int) -> None:
         super().__init__()
         if convolution == "gcn":
-            self.first = GCNConv(input_dim, HIDDEN_UNITS)
-            self.second = GCNConv(HIDDEN_UNITS, 1)
+            # The graph is fixed within a fold, so the degree normalization is computed once.
+            self.first = GCNConv(input_dim, HIDDEN_UNITS, cached=True)
+            self.second = GCNConv(HIDDEN_UNITS, 1, cached=True)
         elif convolution == "graphconv":
             self.first = GraphConv(input_dim, HIDDEN_UNITS, aggr="mean")
             self.second = GraphConv(HIDDEN_UNITS, 1, aggr="mean")
@@ -96,13 +97,19 @@ def fit_predict_gnn(
     test_rows: pd.DataFrame,
     groups: tuple[str, ...],
     wallets: pd.DataFrame,
+    edge_types: tuple[str, ...] = EDGE_TYPES,
     settings: GraphSettings | None = None,
 ) -> np.ndarray:
-    """P(YES) for test rows from a seed-averaged graph network trained on this fold's graph."""
+    """P(YES) for test rows from a seed-averaged graph network trained on this fold's graph.
+
+    `edge_types` restricts the graph to some relations (an empty tuple leaves only the
+    self-loops GCN adds, i.e. a per-node network); used to locate what breaks GCN.
+    """
     rows = pd.concat([train_rows, test_rows])
     nodes = graph_nodes(rows)
     cutoff = pd.Timestamp(test_rows["forecast_time"].iloc[0])
     edges = build_edges(nodes, wallets, cutoff, settings)
+    edges = edges[edges["edge_type"].isin(edge_types)]
     edge_index, edge_weight = collapse_edges(edges, len(nodes))
     features = StageDesign(groups).fit(train_rows).transform(rows)
     labels = rows["label"].to_numpy(dtype=float)
