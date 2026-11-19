@@ -18,3 +18,8 @@ series_start = 2022-10-01
 min_interval_seconds = 10
 backoff_initial_seconds = 60
 backoff_max_seconds = 900
+
+[evaluation]
+# Meetings used only for training before the first out-of-sample forecast.
+min_train_meetings = 12
+bootstrap_resamples = 2000

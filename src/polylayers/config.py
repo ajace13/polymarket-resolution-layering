@@ -29,12 +29,21 @@ class GdeltSettings:
 
 
 @dataclass(frozen=True)
+class EvaluationSettings:
+    """Walk-forward burn-in and bootstrap size."""
+
+    min_train_meetings: int
+    bootstrap_resamples: int
+
+
+@dataclass(frozen=True)
 class Settings:
     """All experiment settings loaded from one TOML file."""
 
     horizons_days: tuple[int, ...]
     data: DataSettings
     gdelt: GdeltSettings
+    evaluation: EvaluationSettings
 
 
 def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
@@ -44,4 +53,5 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
         horizons_days=tuple(raw["horizons_days"]),
         data=DataSettings(**raw["data"]),
         gdelt=GdeltSettings(**raw["gdelt"]),
+        evaluation=EvaluationSettings(**raw["evaluation"]),
     )
