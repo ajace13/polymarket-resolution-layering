@@ -91,13 +91,12 @@ Brier score, log loss, top-1 accuracy, and paired bootstrap intervals vs. the ma
 - **One forecast time per horizon, for every layer.** A forecast for horizon h is made at
   00:00 UTC on (decision date − h). Prices count once their observation window has closed,
   trades only if they happened before the forecast, daily FRED series from the day after
-  publication, and revised macro releases (CPI, PCE, payrolls, claims, NFCI, industrial
-  production) as ALFRED **first-release** values dated by publication, not by reference
-  month. The last point matters: "January CPI as of January 15" did not exist yet.
-- **The market price is the baseline to beat, not a feature to brag about.** The market's
-  normalized price is the reference forecast, and every model is scored by how much it
-  improves on it (Brier score and log loss, which reward calibrated probabilities), not
-  by raw accuracy.
+  publication, and revised macro releases (core CPI, core PCE, unemployment, claims, NFCI,
+  industrial production) as ALFRED **first-release** values dated by publication, not by
+  reference month. The last point matters: "January CPI as of January 15" did not exist yet.
+- **The market price is the baseline to beat.** The market's normalized price is the
+  reference forecast, and every model is scored by how much it improves on it (Brier score
+  and log loss, which reward calibrated probabilities), not by raw accuracy.
 - **Macro, news, and text enter through the bucket.** Those layers are identical for every
   market in a meeting, so on their own they cannot favor "cut" over "hold". Each one is
   interacted with the bucket's signed move (in 25 bp units) and a hold flag. The model can
@@ -197,7 +196,7 @@ src/polylayers/
   graph/                    edge construction, wallet table
   models/                   design matrices, baselines, logistic, conditional logit, GNNs
   evaluation/               walk-forward folds, scoring rules, meeting bootstrap, experiment runner
-  reporting/                figures (light and dark)
+  reporting/                figures (light and dark) and generated summary tables
 data/snapshot/              committed panel + anonymized wallet table
 reports/                    results tables and figures
 docs/report.md              full write-up
