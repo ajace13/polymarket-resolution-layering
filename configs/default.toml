@@ -1,0 +1,20 @@
+# Default experiment settings. Paths are relative to the repository root.
+
+# Forecast horizons, in days before the FOMC decision. Every feature for a horizon h is
+# computed from information available at 00:00 UTC on (decision date - h days).
+horizons_days = [30, 14, 7, 1]
+
+[data]
+# Decision dates bounding the meetings in scope: the first meeting with order-book
+# (CLOB) Polymarket markets through the last meeting that has resolved.
+first_meeting = 2023-02-01
+last_meeting = 2026-10-28
+# Daily news and macro series start early enough to cover 30-day lookback windows at
+# the longest horizon for the first meeting.
+series_start = 2022-10-01
+
+[gdelt]
+# GDELT asks for at most one request every 5 seconds and throttles hard beyond that.
+min_interval_seconds = 10
+backoff_initial_seconds = 60
+backoff_max_seconds = 900
