@@ -1,5 +1,7 @@
 # Polymarket Resolution Information Layering
 
+[![CI](https://github.com/ajace13/polymarket-resolution-layering/actions/workflows/ci.yml/badge.svg)](https://github.com/ajace13/polymarket-resolution-layering/actions/workflows/ci.yml)
+
 **Can anything beat the market on Fed decisions?** Polymarket runs a cluster of binary
 markets on every FOMC meeting: "no change", "cut 25 bps", "hike 25+ bps", and so on.
 Exactly one of them resolves YES. This project asks how much each layer of public
